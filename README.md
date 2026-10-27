@@ -18,7 +18,8 @@ database anyone can regenerate.
 ## Features
 
 - Natural-language questions answered by an agent with SQL tools
-  (list tables, read schema, check query, run query).
+  (list tables, read schema, sample rows, distinct values, check
+  query, run query), all under a per-query timeout.
 - Every response shows the executed SQL, the result rows, the row count,
   and a one-line plain-English explanation.
 - A deterministic synthetic e-commerce database (SQLite): customers,
@@ -116,7 +117,8 @@ export SQL_ASSISTANT_MODEL=gpt-4o-mini  # optional, this is the default
 Configuration is environment-driven (`app/config.py`):
 `SQL_ASSISTANT_DB_PATH` (default `data/demo.db`),
 `SQL_ASSISTANT_MODEL` (default `gpt-4o-mini`),
-`SQL_ASSISTANT_ROW_LIMIT` (default 200).
+`SQL_ASSISTANT_ROW_LIMIT` (default 200),
+`SQL_ASSISTANT_QUERY_TIMEOUT` (default 10 seconds).
 
 ## Usage
 
@@ -171,11 +173,15 @@ curl http://localhost:8000/schema
 python -m pytest -q
 ```
 
-17 tests, all offline: guard rejections (DELETE, DROP, UPDATE, INSERT,
+30 tests, all offline: guard rejections (DELETE, DROP, UPDATE, INSERT,
 multi-statement), LIMIT enforcement and clamping, schema loading,
 `/ask` answering the three wired demo questions (total revenue, top 5
-products by units, orders per month) with real rows, and `/query`
-executing a valid SELECT while rejecting writes with a 400.
+products by units, orders per month) with real rows, `/query`
+executing a valid SELECT while rejecting writes with a 400, the Day 2
+exploration tools (sample rows, distinct values, injection names
+rejected as unknown tables/columns), query timeouts (a runaway
+recursive CTE aborts with a 504 and the engine recovers), and the
+stricter system prompt.
 
 ## Eval plan
 
@@ -190,8 +196,10 @@ into the test suite so the eval path is exercised from the start.
 - **Day 1 (done):** FastAPI app, `create_agent` + SQLDatabaseToolkit,
   read-only guard in three layers, deterministic demo DB, offline fake
   model, 17 tests, 10-question eval set.
-- **Day 2:** Agent hardening: more tools (sample-rows, distinct-value
-  lookup), stricter prompts, query timeouts, better error messages.
+- **Day 2 (done):** Agent hardening: sample-rows and distinct-value
+  lookup tools, stricter system prompts, query timeouts, better error
+  messages. All three Day 1 safety layers intact and still enforced
+  on every execution path.
 - **Day 3:** Eval harness over 25 questions with pass-rate reporting
   against the expected-SQL checks.
 - **Day 4:** Error recovery and self-correction: failed SQL is fed back
