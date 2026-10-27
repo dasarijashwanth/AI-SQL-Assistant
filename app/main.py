@@ -13,7 +13,7 @@ from pydantic import BaseModel
 
 from .agent_service import ask_question
 from .config import get_db_path, get_model_name, llm_mode
-from .db import get_schema, run_select
+from .db import QueryTimeoutError, get_schema, run_select
 from .guard import UnsafeQueryError, validate_select
 
 app = FastAPI(
@@ -64,6 +64,8 @@ def ask(payload: AskRequest):
     _require_db()
     try:
         return ask_question(payload.question)
+    except QueryTimeoutError as exc:
+        raise HTTPException(status_code=504, detail=str(exc))
     except RuntimeError as exc:
         raise HTTPException(status_code=502, detail=str(exc))
 
@@ -75,5 +77,8 @@ def query(payload: QueryRequest):
         safe_sql = validate_select(payload.sql)
     except UnsafeQueryError as exc:
         raise HTTPException(status_code=400, detail=str(exc))
-    rows = run_select(safe_sql)
+    try:
+        rows = run_select(safe_sql)
+    except QueryTimeoutError as exc:
+        raise HTTPException(status_code=504, detail=str(exc))
     return {"sql": safe_sql, "rows": rows, "row_count": len(rows)}

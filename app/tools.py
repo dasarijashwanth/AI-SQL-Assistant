@@ -1,6 +1,6 @@
 """Agent tools.
 
-Built from LangChain's SQLDatabaseToolkit, with two deliberate swaps
+Built from LangChain's SQLDatabaseToolkit, with deliberate swaps
 that make the safety story real:
 
 - sql_db_query_checker is replaced by our own guard: it validates the
@@ -8,13 +8,66 @@ that make the safety story real:
   (writes rejected, row LIMIT enforced). The LLM's opinion of the query
   is never the line of defense.
 - sql_db_query is wrapped so every executed statement is validated by
-  the guard again (defense in depth) and captured, which is how the
-  API can show the exact SQL that ran.
+  the guard again (defense in depth), captured (which is how the API
+  can show the exact SQL that ran), and executed through
+  app.db.run_select, so the query timeout applies here too.
+- Two extra read-only exploration tools: sql_db_sample_rows peeks at a
+  few rows of a table, and sql_db_distinct_values lists the real
+  values of a column, so the agent filters on values that actually
+  exist instead of guessing literals. Both validate table and column
+  names against the live schema, so no name can smuggle in SQL.
 """
 from langchain_community.agent_toolkits.sql.toolkit import SQLDatabaseToolkit
 from langchain_core.tools import StructuredTool
 
+from .db import QueryTimeoutError, get_schema, run_select
 from .guard import UnsafeQueryError, validate_select
+
+SAMPLE_ROWS_DEFAULT = 5
+SAMPLE_ROWS_MAX = 20
+DISTINCT_VALUES_DEFAULT = 50
+DISTINCT_VALUES_MAX = 100
+
+
+def _guard_hint(exc: UnsafeQueryError) -> str:
+    """One concrete fix for a guard rejection, for the agent to act on."""
+    message = str(exc)
+    if "Only SELECT" in message:
+        return "Rewrite it as a single SELECT statement."
+    if "Write keyword" in message:
+        return "Remove the write operation; this assistant can only read."
+    if "Multiple statements" in message:
+        return "Send one statement at a time."
+    return "Use a single read-only SELECT statement."
+
+
+def _guard_error(exc: UnsafeQueryError) -> str:
+    return (
+        f"Error: blocked by the read-only policy: {exc} "
+        f"{_guard_hint(exc)}"
+    )
+
+
+def _schema_map() -> dict[str, list[str]]:
+    return {
+        table["name"]: [c["name"] for c in table["columns"]]
+        for table in get_schema()["tables"]
+    }
+
+
+def _quote(name: str) -> str:
+    return '"' + name.replace('"', '""') + '"'
+
+
+def _format_rows(rows: list[dict]) -> str:
+    if not rows:
+        return "No rows returned."
+    header = ", ".join(rows[0].keys())
+    lines = [header] + [
+        ", ".join("" if v is None else str(v) for v in row.values())
+        for row in rows
+    ]
+    return "\n".join(lines)
 
 
 def build_tools(db, llm, captured_sql: list[str]):
@@ -22,11 +75,13 @@ def build_tools(db, llm, captured_sql: list[str]):
     tools = []
     for tool in toolkit.get_tools():
         if tool.name == "sql_db_query":
-            tools.append(_guarded_query_tool(tool, captured_sql))
+            tools.append(_guarded_query_tool(captured_sql))
         elif tool.name == "sql_db_query_checker":
             tools.append(_guard_checker_tool())
         else:
             tools.append(tool)
+    tools.append(_sample_rows_tool())
+    tools.append(_distinct_values_tool())
     return tools
 
 
@@ -36,7 +91,7 @@ def _guard_checker_tool() -> StructuredTool:
         try:
             return validate_select(query)
         except UnsafeQueryError as exc:
-            return f"Error: query rejected by the read-only guard: {exc}"
+            return _guard_error(exc)
 
     return StructuredTool.from_function(
         func=check,
@@ -49,15 +104,18 @@ def _guard_checker_tool() -> StructuredTool:
     )
 
 
-def _guarded_query_tool(original, captured_sql: list[str]) -> StructuredTool:
+def _guarded_query_tool(captured_sql: list[str]) -> StructuredTool:
     def run(query: str) -> str:
         """Execute a validated read-only SELECT and return result rows."""
         try:
             safe_sql = validate_select(query)
         except UnsafeQueryError as exc:
-            return f"Error: query rejected by the read-only guard: {exc}"
+            return _guard_error(exc)
         captured_sql.append(safe_sql)
-        return original.invoke({"query": safe_sql})
+        try:
+            return _format_rows(run_select(safe_sql))
+        except QueryTimeoutError as exc:
+            return f"Error: {exc}"
 
     return StructuredTool.from_function(
         func=run,
@@ -66,5 +124,84 @@ def _guarded_query_tool(original, captured_sql: list[str]) -> StructuredTool:
             "Execute a SQL SELECT query against the database and return the "
             "result rows. Input must be a single read-only SELECT statement, "
             "already checked with sql_db_query_checker."
+        ),
+    )
+
+
+def _sample_rows_tool() -> StructuredTool:
+    def sample_rows(table_name: str, n: int = SAMPLE_ROWS_DEFAULT) -> str:
+        """Return up to n sample rows from a table."""
+        schema = _schema_map()
+        if table_name not in schema:
+            return (
+                f"Error: unknown table '{table_name}'. "
+                f"Available tables: {', '.join(sorted(schema))}."
+            )
+        n = max(1, min(int(n), SAMPLE_ROWS_MAX))
+        try:
+            rows = run_select(
+                f"SELECT * FROM {_quote(table_name)} LIMIT {n}"
+            )
+        except QueryTimeoutError as exc:
+            return f"Error: {exc}"
+        return _format_rows(rows)
+
+    return StructuredTool.from_function(
+        func=sample_rows,
+        name="sql_db_sample_rows",
+        description=(
+            "Peek at a few sample rows from a table to see its actual data "
+            "shape and values before writing a query. Input is the exact "
+            "table name and, optionally, how many rows (default 5, max 20). "
+            "Use this before guessing what values a column holds."
+        ),
+    )
+
+
+def _distinct_values_tool() -> StructuredTool:
+    def distinct_values(
+        table_name: str,
+        column_name: str,
+        limit: int = DISTINCT_VALUES_DEFAULT,
+    ) -> str:
+        """List the distinct values of a column."""
+        schema = _schema_map()
+        if table_name not in schema:
+            return (
+                f"Error: unknown table '{table_name}'. "
+                f"Available tables: {', '.join(sorted(schema))}."
+            )
+        if column_name not in schema[table_name]:
+            return (
+                f"Error: unknown column '{column_name}' in table "
+                f"'{table_name}'. Available columns: "
+                f"{', '.join(schema[table_name])}."
+            )
+        limit = max(1, min(int(limit), DISTINCT_VALUES_MAX))
+        try:
+            rows = run_select(
+                f"SELECT DISTINCT {_quote(column_name)} "
+                f"FROM {_quote(table_name)} "
+                f"ORDER BY 1 LIMIT {limit}"
+            )
+        except QueryTimeoutError as exc:
+            return f"Error: {exc}"
+        if not rows:
+            return f"No values found for {table_name}.{column_name}."
+        return "\n".join(
+            "" if v is None else str(v)
+            for row in rows
+            for v in row.values()
+        )
+
+    return StructuredTool.from_function(
+        func=distinct_values,
+        name="sql_db_distinct_values",
+        description=(
+            "List the distinct values of a column, so a WHERE filter uses a "
+            "value that actually exists in the data instead of a guessed "
+            "literal. Input is the exact table name and column name. "
+            "Always use this before filtering on a status, category, or "
+            "other coded value."
         ),
     )

@@ -11,6 +11,8 @@ tests, local dev, and demos:
   model so everything works fully offline (see app/fake_llm.py).
 - SQL_ASSISTANT_ROW_LIMIT: hard cap on rows any query may return
   (default: 200)
+- SQL_ASSISTANT_QUERY_TIMEOUT: max seconds any single database query
+  may run before it is interrupted (default: 10)
 """
 import os
 from pathlib import Path
@@ -30,6 +32,10 @@ def get_model_name() -> str:
 
 def get_row_limit() -> int:
     return int(os.environ.get("SQL_ASSISTANT_ROW_LIMIT", "200"))
+
+
+def get_query_timeout() -> float:
+    return float(os.environ.get("SQL_ASSISTANT_QUERY_TIMEOUT", "10"))
 
 
 def llm_mode() -> str:
