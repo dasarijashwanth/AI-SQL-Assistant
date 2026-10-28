@@ -24,8 +24,11 @@ database anyone can regenerate.
   and a one-line plain-English explanation.
 - A deterministic synthetic e-commerce database (SQLite): customers,
   products, orders, order_items, payments, reviews.
-- An eval set of 10 demo questions with expected SQL and result checks
-  (`evals/demo_questions.json`), growing into a full harness on Day 3.
+- An eval harness over 25 questions (`evals/questions_day3.json`,
+  scored by `app/eval.py`, results in `evals/results_day3.md`):
+  20 agent questions across lookups, filters, joins, aggregations,
+  and ordering/limits, plus 5 adversarial items aimed at the safety
+  layers. Day 3 score: 25/25, average agent latency 46.2 ms.
 - Runs fully offline with no API key (see "Offline mode" below), and
   uses a real OpenAI model when a key is present.
 
@@ -173,23 +176,35 @@ curl http://localhost:8000/schema
 python -m pytest -q
 ```
 
-30 tests, all offline: guard rejections (DELETE, DROP, UPDATE, INSERT,
+38 tests, all offline: guard rejections (DELETE, DROP, UPDATE, INSERT,
 multi-statement), LIMIT enforcement and clamping, schema loading,
 `/ask` answering the three wired demo questions (total revenue, top 5
 products by units, orders per month) with real rows, `/query`
 executing a valid SELECT while rejecting writes with a 400, the Day 2
 exploration tools (sample rows, distinct values, injection names
 rejected as unknown tables/columns), query timeouts (a runaway
-recursive CTE aborts with a 504 and the engine recovers), and the
-stricter system prompt.
+recursive CTE aborts with a 504 and the engine recovers), the
+stricter system prompt, and the Day 3 eval harness itself (scoring
+logic, fake-model routing per question family, adversarial
+rejections, end-to-end subset run).
 
 ## Eval plan
 
 `evals/demo_questions.json` holds 10 questions, each with a reference
 SQL query and a machine-checkable expectation (non-empty result,
-minimum row count, or a positive scalar). Day 3 turns this file into a
-scored harness over 25 questions; Day 1 wires the first three questions
-into the test suite so the eval path is exercised from the start.
+minimum row count, or a positive scalar). Day 3 built the scored
+harness on top of that pattern: `evals/questions_day3.json` holds 25
+questions (20 agent, 5 adversarial), `app/eval.py` scores them, and
+`scripts/run_eval.py` runs the set and writes
+`evals/results_day3.md`. Day 3 score: 25/25 (agent 20/20,
+adversarial 5/5), average agent latency 46.2 ms, orders row count
+unchanged at 120 before and after the adversarial batch.
+
+Honest scope note: in offline fake-LLM mode the harness measures
+pipeline correctness (the keyword-mapped stand-in routes each question
+family to a sensible query, the guard lets it through, the database
+answers it), not open-ended model reasoning. With a real model behind
+the same code path, the same harness and checks apply unchanged.
 
 ## Roadmap
 
@@ -200,8 +215,12 @@ into the test suite so the eval path is exercised from the start.
   lookup tools, stricter system prompts, query timeouts, better error
   messages. All three Day 1 safety layers intact and still enforced
   on every execution path.
-- **Day 3:** Eval harness over 25 questions with pass-rate reporting
-  against the expected-SQL checks.
+- **Day 3 (done):** Eval harness over 25 questions with pass-rate
+  reporting: 25/25 (agent 20/20, adversarial 5/5), average agent
+  latency 46.2 ms, no database mutation from the adversarial batch.
+  Fake-model keyword map extended with one branch per new question
+  family; the three Day 1 wired questions keep their original
+  mapping. 38 tests.
 - **Day 4:** Error recovery and self-correction: failed SQL is fed back
   to the agent for one bounded repair attempt, with the retry visible
   in the response.
