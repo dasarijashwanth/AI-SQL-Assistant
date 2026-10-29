@@ -10,7 +10,10 @@ that make the safety story real:
 - sql_db_query is wrapped so every executed statement is validated by
   the guard again (defense in depth), captured (which is how the API
   can show the exact SQL that ran), and executed through
-  app.db.run_select, so the query timeout applies here too.
+  app.db.run_select, so the query timeout applies here too. Day 4
+  adds a bounded repair budget: if execution raises a SQLite error,
+  the error is fed back to the agent for exactly ONE repair attempt;
+  a second failure is reported honestly with no further retry.
 - Two extra read-only exploration tools: sql_db_sample_rows peeks at a
   few rows of a table, and sql_db_distinct_values lists the real
   values of a column, so the agent filters on values that actually
@@ -20,6 +23,8 @@ that make the safety story real:
 from langchain_community.agent_toolkits.sql.toolkit import SQLDatabaseToolkit
 from langchain_core.tools import StructuredTool
 
+import sqlalchemy
+
 from .db import QueryTimeoutError, get_schema, run_select
 from .guard import UnsafeQueryError, validate_select
 
@@ -27,6 +32,11 @@ SAMPLE_ROWS_DEFAULT = 5
 SAMPLE_ROWS_MAX = 20
 DISTINCT_VALUES_DEFAULT = 50
 DISTINCT_VALUES_MAX = 100
+
+# Day 4: the agent gets exactly one repair attempt per question when a
+# query fails at execution. The budget is tracked on the shared
+# ``attempts`` list (one entry per executed query).
+MAX_REPAIR_ATTEMPTS = 1
 
 
 def _guard_hint(exc: UnsafeQueryError) -> str:
@@ -70,12 +80,23 @@ def _format_rows(rows: list[dict]) -> str:
     return "\n".join(lines)
 
 
-def build_tools(db, llm, captured_sql: list[str]):
+def build_tools(db, llm, captured_sql: list[str], attempts: list[dict] | None = None):
+    """Build the agent's tool set.
+
+    ``captured_sql`` collects every guard-validated query in order.
+    ``attempts`` (Day 4) collects one record per executed query:
+    {"sql", "error" (str or None), "row_count" (int or None)}. It is
+    the repair budget ledger and the source of the /ask response's
+    visible retry trace. Callers that don't need it (eval
+    adversarial probes) may omit it.
+    """
+    if attempts is None:
+        attempts = []
     toolkit = SQLDatabaseToolkit(db=db, llm=llm)
     tools = []
     for tool in toolkit.get_tools():
         if tool.name == "sql_db_query":
-            tools.append(_guarded_query_tool(captured_sql))
+            tools.append(_guarded_query_tool(captured_sql, attempts))
         elif tool.name == "sql_db_query_checker":
             tools.append(_guard_checker_tool())
         else:
@@ -104,18 +125,61 @@ def _guard_checker_tool() -> StructuredTool:
     )
 
 
-def _guarded_query_tool(captured_sql: list[str]) -> StructuredTool:
+def _guarded_query_tool(captured_sql: list[str], attempts: list[dict]) -> StructuredTool:
     def run(query: str) -> str:
-        """Execute a validated read-only SELECT and return result rows."""
+        """Execute a validated read-only SELECT and return result rows.
+
+        Day 4 repair contract: a SQLite execution error is returned as
+        a tool error AND recorded in ``attempts``, so the agent can use
+        its one repair attempt. A second failure is reported with an
+        explicit do-not-retry instruction, and any further execution
+        is refused, so the agent cannot loop. Guard rejections are
+        policy feedback, not execution failures: they never execute
+        and never touch the repair budget.
+        """
         try:
             safe_sql = validate_select(query)
         except UnsafeQueryError as exc:
             return _guard_error(exc)
+        prior_failures = sum(1 for a in attempts if a["error"] is not None)
+        if prior_failures > MAX_REPAIR_ATTEMPTS:
+            return (
+                "Error: the repair budget is exhausted: one repair "
+                "attempt was already used and it also failed. Do not "
+                "retry; report the failure to the user honestly."
+            )
         captured_sql.append(safe_sql)
         try:
-            return _format_rows(run_select(safe_sql))
+            rows = run_select(safe_sql)
         except QueryTimeoutError as exc:
+            attempts.append(
+                {"sql": safe_sql, "error": str(exc), "row_count": None}
+            )
             return f"Error: {exc}"
+        except sqlalchemy.exc.SQLAlchemyError as exc:
+            attempts.append(
+                {
+                    "sql": safe_sql,
+                    "error": f"SQLite execution error: {exc}",
+                    "row_count": None,
+                }
+            )
+            if prior_failures >= MAX_REPAIR_ATTEMPTS:
+                return (
+                    f"Error: the repaired query also failed: {exc} "
+                    "Do not retry; report the failure to the user "
+                    "honestly."
+                )
+            return (
+                f"Error: the query failed to execute: {exc} "
+                "Fix the specific problem (for example a misspelled "
+                "column or table name) and try exactly once more. Do "
+                "not repeat the failed query unchanged."
+            )
+        attempts.append(
+            {"sql": safe_sql, "error": None, "row_count": len(rows)}
+        )
+        return _format_rows(rows)
 
     return StructuredTool.from_function(
         func=run,

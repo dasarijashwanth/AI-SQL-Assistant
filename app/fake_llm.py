@@ -102,6 +102,12 @@ LARGEST_ORDERS_SQL = (
     "ORDER BY total_amount DESC LIMIT 10"
 )
 DEFAULT_SQL = "SELECT * FROM orders"
+# Day 4 repair-test SQL: guard-valid (single SELECT, read-only) but
+# fails at SQLite execution with "no such column". The fake model
+# issues BROKEN_SQL first, then repairs after seeing the error.
+BROKEN_SQL = "SELECT total_revenue_broken FROM orders"
+# A repair that is broken too, for the fails-twice test path.
+BROKEN_REPAIR_SQL = "SELECT missing_col_xyz FROM orders WHERE nope_col_abc = 1"
 
 
 def sql_for_question(question: str) -> str:
@@ -112,9 +118,16 @@ def sql_for_question(question: str) -> str:
     orders per month. Day 3 adds one branch per new question family so
     the eval harness can check that the pipeline routes each family to
     a sensible query; the map is a stand-in for a real model, not a
-    measure of open-ended question understanding.
+    measure of open-ended question understanding. Day 4 adds two
+    branches for the self-correction tests: "always broken" fails on
+    the first attempt AND on the repair, "broken column" fails first
+    and is repaired to the real total-revenue query.
     """
     q = question.lower()
+    if "always broken" in q:
+        return BROKEN_SQL
+    if "broken column" in q:
+        return BROKEN_SQL
     if "categor" in q:
         return CATEGORY_REVENUE_SQL
     if "month" in q and "revenue" in q:
@@ -209,8 +222,44 @@ class FakeSQLChatModel(BaseChatModel):
                 "sql_db_query", {"query": str(last.content).strip()}, step
             )
         if name == "sql_db_query":
-            return AIMessage(content=f"Query executed. Result: {last.content}")
+            return self._repair_turn(question, tool_msgs, last, step)
         return AIMessage(content="I could not complete that request.")
+
+    def _repair_turn(self, question, tool_msgs, last, step) -> AIMessage:
+        """Day 4: react to a failed execution with one bounded repair.
+
+        If the last query errored, issue the repair query exactly once:
+        the real total-revenue query for "broken column" questions
+        (repair succeeds) or a still-broken query for "always broken"
+        questions (repair fails, exercising the fails-twice path). If
+        the repair already ran and errored, stop honestly instead of
+        looping.
+        """
+        content = str(last.content or "")
+        query_calls = [
+            m
+            for m in tool_msgs
+            if (getattr(m, "name", "") or "") == "sql_db_query"
+        ]
+        if "Error:" in content:
+            if len(query_calls) >= 2:
+                return AIMessage(
+                    content="The repaired query also failed, so I could "
+                    "not answer this question."
+                )
+            q = question.lower()
+            if "always broken" in q:
+                return self._tool_call(
+                    "sql_db_query", {"query": BROKEN_REPAIR_SQL}, step
+                )
+            if "broken column" in q:
+                return self._tool_call(
+                    "sql_db_query", {"query": TOTAL_REVENUE_SQL}, step
+                )
+            return AIMessage(
+                content=f"I could not complete that request. {content}"
+            )
+        return AIMessage(content=f"Query executed. Result: {content}")
 
     @staticmethod
     def _tool_call(name: str, args: dict, step: int) -> AIMessage:

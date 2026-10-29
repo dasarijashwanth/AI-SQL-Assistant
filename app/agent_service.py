@@ -32,7 +32,9 @@ SYSTEM_PROMPT = (
     "4. Keep result sets small: prefer aggregates and explicit LIMITs "
     "over dumping whole tables.\n"
     "5. If the checker or the query tool returns an error, read the "
-    "reason, fix that specific problem, and try once more at most. Never "
+    "reason, fix that specific problem, and try once more at most. "
+    "You get exactly one repair attempt per question: if the retry "
+    "also fails, stop and report the failure honestly. Never "
     "repeat a rejected query unchanged, and never invent rows to cover "
     "a failed query.\n"
     "6. When you have the result, answer with one short plain-English "
@@ -50,21 +52,29 @@ def get_llm():
 
 
 def ask_question(question: str) -> dict:
+    """Run the agent for one question, with a bounded repair budget.
+
+    The response always includes an ``attempts`` trace: one entry per
+    executed query with its SQL and any execution error, so the retry
+    is visible. ``repaired`` is True when at least one attempt failed
+    before the final outcome. If the last attempt failed (the repair
+    budget is spent), the response carries the error visibly with
+    empty rows instead of raising: the failure is the answer.
+    """
     db = get_sql_database()
     llm = get_llm()
     captured_sql: list[str] = []
-    tools = build_tools(db, llm, captured_sql)
+    attempts: list[dict] = []
+    tools = build_tools(db, llm, captured_sql, attempts)
     agent = create_agent(llm, tools, system_prompt=SYSTEM_PROMPT)
     result = agent.invoke({"messages": [{"role": "user", "content": question}]})
-    if not captured_sql:
+    if not attempts:
         raise RuntimeError(
             "The agent did not run any query. The last tool result may "
             "have been an error (for example, a query the read-only "
             "guard rejected or one that timed out); check the agent "
             "trace and rephrase the question."
         )
-    sql = captured_sql[-1]
-    rows = run_select(sql)
     explanation = ""
     for message in reversed(result["messages"]):
         if (
@@ -74,10 +84,30 @@ def ask_question(question: str) -> dict:
         ):
             explanation = message.content.strip().splitlines()[0]
             break
+    last = attempts[-1]
+    repaired = any(a["error"] is not None for a in attempts)
+    if last["error"] is None:
+        # One final execution of the winning query, exactly as before
+        # Day 4: the timeout still surfaces here as an HTTP 504.
+        rows = run_select(last["sql"])
+        return {
+            "question": question,
+            "sql": last["sql"],
+            "rows": rows,
+            "row_count": len(rows),
+            "explanation": explanation,
+            "attempts": attempts,
+            "repaired": repaired,
+            "error": None,
+        }
     return {
         "question": question,
-        "sql": sql,
-        "rows": rows,
-        "row_count": len(rows),
-        "explanation": explanation,
+        "sql": last["sql"],
+        "rows": [],
+        "row_count": 0,
+        "explanation": explanation
+        or "The query failed and the one repair attempt also failed.",
+        "attempts": attempts,
+        "repaired": repaired,
+        "error": last["error"],
     }
