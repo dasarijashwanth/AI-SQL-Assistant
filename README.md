@@ -21,7 +21,10 @@ database anyone can regenerate.
   (list tables, read schema, sample rows, distinct values, check
   query, run query), all under a per-query timeout.
 - Every response shows the executed SQL, the result rows, the row count,
-  and a one-line plain-English explanation.
+  and a one-line plain-English explanation. When a query fails at
+  execution, the response also shows the visible retry trace: each
+  attempt's SQL and error, whether a repair happened, and the final
+  outcome (one bounded repair attempt, no retry loops).
 - A deterministic synthetic e-commerce database (SQLite): customers,
   products, orders, order_items, payments, reviews.
 - An eval harness over 25 questions (`evals/questions_day3.json`,
@@ -176,7 +179,7 @@ curl http://localhost:8000/schema
 python -m pytest -q
 ```
 
-38 tests, all offline: guard rejections (DELETE, DROP, UPDATE, INSERT,
+44 tests, all offline: guard rejections (DELETE, DROP, UPDATE, INSERT,
 multi-statement), LIMIT enforcement and clamping, schema loading,
 `/ask` answering the three wired demo questions (total revenue, top 5
 products by units, orders per month) with real rows, `/query`
@@ -221,9 +224,13 @@ the same code path, the same harness and checks apply unchanged.
   Fake-model keyword map extended with one branch per new question
   family; the three Day 1 wired questions keep their original
   mapping. 38 tests.
-- **Day 4:** Error recovery and self-correction: failed SQL is fed back
-  to the agent for one bounded repair attempt, with the retry visible
-  in the response.
+- **Day 4 (done):** Error recovery and self-correction: a SQL execution
+  failure is fed back to the agent for exactly one repair attempt, and
+  the retry is visible in the `/ask` response (`attempts` trace with
+  each attempt's SQL and error, `repaired` flag, `error` on final
+  failure). A second failure is reported honestly with no retry loop;
+  the guard and timeout handling apply to repaired SQL unchanged.
+  44 tests.
 - **Day 5:** Streamlit UI: question box, SQL display, results table,
   and a guard-activity panel.
 - **Day 6:** Polish and demo script: scripted walkthrough covering the
