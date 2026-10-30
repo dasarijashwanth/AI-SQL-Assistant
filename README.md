@@ -179,7 +179,7 @@ curl http://localhost:8000/schema
 python -m pytest -q
 ```
 
-44 tests, all offline: guard rejections (DELETE, DROP, UPDATE, INSERT,
+54 tests, all offline: guard rejections (DELETE, DROP, UPDATE, INSERT,
 multi-statement), LIMIT enforcement and clamping, schema loading,
 `/ask` answering the three wired demo questions (total revenue, top 5
 products by units, orders per month) with real rows, `/query`
@@ -187,9 +187,12 @@ executing a valid SELECT while rejecting writes with a 400, the Day 2
 exploration tools (sample rows, distinct values, injection names
 rejected as unknown tables/columns), query timeouts (a runaway
 recursive CTE aborts with a 504 and the engine recovers), the
-stricter system prompt, and the Day 3 eval harness itself (scoring
+stricter system prompt, the Day 3 eval harness itself (scoring
 logic, fake-model routing per question family, adversarial
-rejections, end-to-end subset run).
+rejections, end-to-end subset run), and the Day 5 Streamlit UI
+(module imports, status labels, attempt formatting, ask_question
+integration for happy/repaired/failed paths, graceful error
+rendering).
 
 ## Eval plan
 
@@ -231,8 +234,13 @@ the same code path, the same harness and checks apply unchanged.
   failure). A second failure is reported honestly with no retry loop;
   the guard and timeout handling apply to repaired SQL unchanged.
   44 tests.
-- **Day 5:** Streamlit UI: question box, SQL display, results table,
-  and a guard-activity panel.
+- **Day 5 (done, Fri Oct 30, 2026):** Streamlit UI (`app/ui.py`,
+  run with `streamlit run app/ui.py`): question box with sample
+  questions, answer card, generated-SQL expander, attempts-trace
+  expander, result-rows expander, and a clear grounded / repaired /
+  failed state. Fully offline by default (fake-LLM mode, no API key);
+  a real model is used only when OPENAI_API_KEY is set. Service
+  failures render as an error card instead of crashing. 54 tests.
 - **Day 6:** Polish and demo script: scripted walkthrough covering the
   happy path and the guard rejecting a write attempt live.
 - **Day 7:** Final README with eval results, architecture diagram, and
