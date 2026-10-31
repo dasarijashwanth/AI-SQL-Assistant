@@ -179,7 +179,7 @@ curl http://localhost:8000/schema
 python -m pytest -q
 ```
 
-54 tests, all offline: guard rejections (DELETE, DROP, UPDATE, INSERT,
+64 tests, all offline: guard rejections (DELETE, DROP, UPDATE, INSERT,
 multi-statement), LIMIT enforcement and clamping, schema loading,
 `/ask` answering the three wired demo questions (total revenue, top 5
 products by units, orders per month) with real rows, `/query`
@@ -189,10 +189,13 @@ rejected as unknown tables/columns), query timeouts (a runaway
 recursive CTE aborts with a 504 and the engine recovers), the
 stricter system prompt, the Day 3 eval harness itself (scoring
 logic, fake-model routing per question family, adversarial
-rejections, end-to-end subset run), and the Day 5 Streamlit UI
+rejections, end-to-end subset run), the Day 5 Streamlit UI
 (module imports, status labels, attempt formatting, ask_question
 integration for happy/repaired/failed paths, graceful error
-rendering).
+rendering), and the Day 6 polish and demo steps (em-dash-free attempt
+lines with row counts, helper edge cases, demo happy path through
+the service, guard rejection of DELETE via the guard and via the
+agent's query-checker tool, orders table verified untouched).
 
 ## Eval plan
 
@@ -241,7 +244,15 @@ the same code path, the same harness and checks apply unchanged.
   failed state. Fully offline by default (fake-LLM mode, no API key);
   a real model is used only when OPENAI_API_KEY is set. Service
   failures render as an error card instead of crashing. 54 tests.
-- **Day 6:** Polish and demo script: scripted walkthrough covering the
-  happy path and the guard rejecting a write attempt live.
+- **Day 6 (done, Sat Oct 31, 2026):** Polish and demo script. Small
+  UI fixes (attempt lines are em-dash-free per the user-facing copy
+  rule and now show row counts on success). Scripted walkthrough in
+  `demo/DEMO_SCRIPT.md` plus a runnable `demo/demo.py`
+  (`~/.venv-week4/bin/python demo/demo.py`, fully offline): Part 1
+  asks the wired total-revenue question and prints the answer, SQL,
+  attempts trace, and rows; Part 2 runs a live DELETE against the
+  guard and the agent's query-checker tool, shows both rejections,
+  and proves the orders table is untouched (120 rows). Day 3 eval
+  re-run still 25/25 with no mutation. 64 tests.
 - **Day 7:** Final README with eval results, architecture diagram, and
   lessons learned.
