@@ -35,11 +35,18 @@ def status_label(result: dict) -> str:
 
 
 def format_attempt(attempt: dict, index: int) -> str:
-    """One-line human summary of a single executed attempt."""
+    """One-line human summary of a single executed attempt.
+
+    No em dashes: the UI text is user-facing copy.
+    """
     error = attempt.get("error")
     if error:
-        return f"Attempt {index}: failed — {error}"
-    return f"Attempt {index}: succeeded"
+        return f"Attempt {index}: failed: {error}"
+    row_count = attempt.get("row_count")
+    if row_count is None:
+        return f"Attempt {index}: succeeded"
+    noun = "row" if row_count == 1 else "rows"
+    return f"Attempt {index}: succeeded ({row_count} {noun})"
 
 
 def run_question(question: str) -> dict:
