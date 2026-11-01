@@ -15,6 +15,29 @@ that executed, and measuring whether the answers are actually right. This
 project builds that whole frame, then points it at a deterministic demo
 database anyone can regenerate.
 
+## Live demo
+
+The Streamlit UI (`app/ui.py`, run with `streamlit run app/ui.py`) is
+the public front door: a question box with sample questions, an answer
+card, a generated-SQL expander, an attempts-trace expander, and result
+rows, with a clear grounded / repaired / failed state. It runs fully
+offline by default (fake-LLM mode, no API key).
+
+Live URL: (added once the app is deployed; see below)
+
+### Deploying to Streamlit Community Cloud
+
+1. Sign in at share.streamlit.io with the GitHub account that owns
+   this repo.
+2. Click "New app", choose this repo, branch `main`.
+3. Main file path: `app/ui.py`. Leave everything else default, then
+   Deploy.
+4. The app builds the demo database deterministically on first run
+   (`ensure_demo_db` in `app/ui.py`), because `data/demo.db` is
+   gitignored. No secrets are needed for offline mode; to answer with
+   a real model instead, add `OPENAI_API_KEY` in the app's Secrets
+   settings.
+
 ## Features
 
 - Natural-language questions answered by an agent with SQL tools
@@ -254,5 +277,13 @@ the same code path, the same harness and checks apply unchanged.
   guard and the agent's query-checker tool, shows both rejections,
   and proves the orders table is untouched (120 rows). Day 3 eval
   re-run still 25/25 with no mutation. 64 tests.
-- **Day 7:** Final README with eval results, architecture diagram, and
-  lessons learned.
+- **Day 7 (done, Sun Nov 1, 2026):** Final polish and going live.
+  README finalized with measured results and a "Live demo" section;
+  `requirements.txt` pinned and `.streamlit/config.toml` added for a
+  reproducible Streamlit Community Cloud deploy; the UI now builds the
+  gitignored demo database deterministically on first run
+  (`ensure_demo_db`). Verification re-run: 64/64 tests, eval 25/25
+  (agent 20/20, adversarial 5/5, average agent latency 56.9 ms this
+  run vs 46.2 ms measured on Day 3), orders table still 120 rows
+  after the adversarial batch, and `demo/demo.py` runs end-to-end.
+  Streamlit UI smoke-tested locally (health endpoint 200).

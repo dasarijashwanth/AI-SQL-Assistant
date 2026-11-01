@@ -1,10 +1,12 @@
-fastapi
-uvicorn
-langchain
-langchain-community
-langchain-openai
-sqlalchemy
-pydantic
-pytest
-httpx
-streamlit
+# Pinned versions, verified locally 2026-11-01 (Python 3.12).
+# Pinned so Streamlit Community Cloud builds the same stack every time.
+fastapi==0.161.1
+uvicorn==0.54.0
+langchain==1.4.7
+langchain-community==0.4.2
+langchain-openai==1.7.2
+SQLAlchemy==2.1.6
+pydantic==2.14.1
+pytest==9.1.1
+httpx==0.28.1
+streamlit==1.66.1
