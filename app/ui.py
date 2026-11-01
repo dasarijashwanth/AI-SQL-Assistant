@@ -12,7 +12,25 @@ Run it with:
 import streamlit as st
 
 from .agent_service import ask_question
-from .config import get_model_name, llm_mode
+from .config import get_db_path, get_model_name, llm_mode
+
+
+def ensure_demo_db() -> None:
+    """Build the demo database on first run if it is missing.
+
+    The SQLite file is gitignored (data/*.db), so a fresh clone, for
+    example on Streamlit Community Cloud, has no data/demo.db. The
+    builder is deterministic (seeded), so a first-run build is byte
+    equivalent to the local one.
+    """
+    from pathlib import Path
+
+    db_path = Path(get_db_path())
+    if db_path.exists():
+        return
+    from scripts.build_demo_db import build
+
+    build(str(db_path))
 
 # Streamlit reruns this script top-to-bottom on every interaction, so
 # each question is an independent agent run with its own repair budget.
@@ -107,6 +125,7 @@ def render_result(result: dict) -> None:
 def main() -> None:
     st.set_page_config(page_title="AI SQL Assistant", layout="wide")
     st.title("AI SQL Assistant")
+    ensure_demo_db()
     mode = llm_mode()
     if mode == "fake":
         st.caption("Offline demo mode: deterministic fake LLM, no API key needed.")
