@@ -23,7 +23,7 @@ card, a generated-SQL expander, an attempts-trace expander, and result
 rows, with a clear grounded / repaired / failed state. It runs fully
 offline by default (fake-LLM mode, no API key).
 
-Live URL: (added once the app is deployed; see below)
+Live URL: https://ai-sql-assistant-dj.streamlit.app/
 
 ### Deploying to Streamlit Community Cloud
 
