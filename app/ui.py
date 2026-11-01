@@ -9,10 +9,19 @@ Run it with:
 
     streamlit run app/ui.py
 """
+import os
+import sys
+
+# Streamlit (Cloud and local) runs this file as a script, so relative
+# imports would fail here. Put the repo root on sys.path and use
+# absolute imports; the rest of the app package keeps its own
+# relative imports, which work once `app` is imported as a package.
+sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
+
 import streamlit as st
 
-from .agent_service import ask_question
-from .config import get_db_path, get_model_name, llm_mode
+from app.agent_service import ask_question
+from app.config import get_db_path, get_model_name, llm_mode
 
 
 def ensure_demo_db() -> None:
