@@ -154,8 +154,8 @@ def main() -> None:
 
     st.write("Or try one of these:")
     cols = st.columns(len(SAMPLE_QUESTIONS))
-    for col, sample in zip(cols, SAMPLE_QUESTIONS):
-        if col.button(sample, key=f"sample-{sample[:12]}"):
+    for i, (col, sample) in enumerate(zip(cols, SAMPLE_QUESTIONS)):
+        if col.button(sample, key=f"sample-{i}"):
             with st.spinner("Asking the agent..."):
                 st.session_state["result"] = run_question(sample)
 
